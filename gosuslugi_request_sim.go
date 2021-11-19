@@ -34,6 +34,16 @@ var err error
 var last_web_element selenium.WebElement
 var last_web_elements []selenium.WebElement
 var last_xpath string
+var xpaths = map[string]string{
+	"input_login":    `//input[@id="login"]`,
+	"input_password": `//input[@id="password"]`,
+	"button_login":   `//button[text()="Войти"]`,
+	"Войти_как":      `//p[contains(text(),"Частное лицо")]`,
+	"Номер_телефона_в_сообщении": `//div/p/b`,
+	"Кнопка_Проверить_данные":    `//a[contains(text(),"Проверить данные")]`,
+	"Кнопка_Подтвердить_данные":  `//button/span[contains(text(),"Подтвердить")]`,
+	"Заявление_отправлено":       `//h3/center[contains(text(), "Заявление отправлено")]`,
+}
 
 const (
 	max_wait_sec = 10
@@ -52,9 +62,25 @@ func main() {
 	}
 
 	// получаем логин/пароль от сайта
-	login := cfg.Section("gosuslugi.ru").Key("login").String()
-	password := cfg.Section("gosuslugi.ru").Key("password").String()
-	log.Println("config.ini [gosuslugi.ru]login:", login)
+	login_env := cfg.Section("gosuslugi.ru").Key("login").String()
+	login, err_bool := os.LookupEnv(login_env)
+	check_fatal_error_bool(err_bool, "Нет переменной окружения "+login_env)
+	password_env := cfg.Section("gosuslugi.ru").Key("password").String()
+	password, err_bool := os.LookupEnv(password_env)
+	check_fatal_error_bool(err_bool, "Нет переменной окружения "+password_env)
+	log.Println("login в переменной окружения ", login_env, login)
+	log.Println("password в переменной окружения ", password_env)
+
+	//загружаем xpath из файла
+	for key_xpath, value_xpath := range xpaths {
+		new_value := cfg.Section("xpath").Key(key_xpath).String()
+		if new_value == "" {
+			log.Println("Не найдено значение config.ini [xpath]"+key_xpath+" значение по умолчанию "+value_xpath, login)
+		} else {
+			xpaths[key_xpath] = new_value
+		}
+
+	}
 
 	//Подготовка браузера к работе
 	prepare_browser()
@@ -63,10 +89,12 @@ func main() {
 
 	//авторизация
 	open_url("https://lk.gosuslugi.ru/notifications?type=GEPS")
-	send_value(`//input[@id="login"]`, login)
-	send_value(`//input[@id="password"]`, password)
-	press_button(`//button[@id="loginByPwdButton"]`)
-	press_button(`//p[contains(text(),"Частное лицо")]`)
+	time.Sleep(1 * time.Second)
+	send_value("input_login", login)
+	send_value("input_password", password)
+	press_button("button_login")
+	time.Sleep(2 * time.Second)
+	press_button("Войти_как")
 
 	open_url("https://lk.gosuslugi.ru/notifications?type=GEPS")
 
@@ -98,7 +126,7 @@ func main() {
 		open_url("https://lk.gosuslugi.ru" + url_message)
 
 		// берем номер телефона
-		if !find_web_element(`//div/p/b`) {
+		if !find_web_element("Номер_телефона_в_сообщении") {
 			add_info = " не найден телефон в сообщении"
 			log.Println(index+1, url_message, add_info)
 			err = nil
@@ -109,14 +137,14 @@ func main() {
 			add_info, err = last_web_element.Text()
 		}
 
-		press_button(`//a[contains(text(),"Проверить данные")]`)
+		press_button("Кнопка_Проверить_данные")
 		find_web_element_by_xpaths(arr_xpath)
 		if err != nil {
 
 		} else if last_xpath == xpath_right {
 			press_button(xpath_right)
-			press_button(`//button/span[contains(text(),"Подтвердить")]`)
-			find_web_element(`//h3/center[contains(text(), "Заявление отправлено")]`)
+			press_button("Кнопка_Подтвердить_данные")
+			find_web_element("Заявление_отправлено")
 			if err == nil {
 				add_info += " отправлено сейчас"
 			}
@@ -136,6 +164,12 @@ func main() {
 
 	log.Println("End ", err)
 	time.Sleep(200 * time.Second)
+}
+
+func check_fatal_error_bool(err bool, text_error string) {
+	if !err {
+		log.Fatalln(text_error)
+	}
 }
 
 // подключение к браузеру
@@ -187,6 +221,10 @@ func find_web_element(xpath string) bool {
 		return false
 	}
 
+	if xpath[1:2] != "/" {
+		xpath = xpaths[xpath]
+	}
+
 	for i := 0; i < max_wait_sec; i++ {
 		last_xpath = xpath
 		last_web_element, err = web_driver.FindElement(selenium.ByXPATH, xpath)
@@ -196,6 +234,7 @@ func find_web_element(xpath string) bool {
 		time.Sleep(time.Second)
 	}
 	last_xpath = ""
+	log.Println("Не найден " + xpath)
 	return false
 }
 
@@ -235,12 +274,17 @@ func find_web_element_array(xpath string) {
 
 //поиск на странице xpath и нажатие  на элемент
 //если xpath не задан "", то без поиска, сразу нажатие
+//если второй символ xpath не "/" то хpath, берется из xpaths[xpath]
 func press_button(xpath string) {
 	if err != nil {
 		return
 	}
 
 	if xpath != "" {
+		if xpath[1:2] != "/" {
+			xpath = xpaths[xpath]
+		}
+
 		find_web_element(xpath)
 	}
 
