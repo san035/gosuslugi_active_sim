@@ -22,6 +22,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tebeka/selenium"
@@ -31,24 +32,22 @@ import (
 var driver_service *selenium.Service
 var web_driver selenium.WebDriver
 var err error
+var max_wait_sec int
 var last_web_element selenium.WebElement
 var last_web_elements []selenium.WebElement
 var last_xpath string
 var xpaths = map[string]string{
-	"input_login":    `//input[@id="login"]`,
-	"input_password": `//input[@id="password"]`,
-	"button_login":   `//button[text()="Войти"]`,
-	"Войти_как":      `//p[contains(text(),"Частное лицо")]`,
+	"input_login":     `//input[@id="login"]`,
+	"input_password":  `//input[@id="password"]`,
+	"button_login":    `//button[text()="Войти"]`,
+	"Войти_как":       `//p[contains(text(),"Частное лицо")]`,
+	"Показать_больше": `//span[text()="Показать больше"]`,
 	"Номер_телефона_в_сообщении": `//div/p/b`,
 	"Кнопка_Проверить_данные":    `//a[contains(text(),"Проверить данные")]`,
 	"Кнопка_Подтвердить_данные":  `//button/span[contains(text(),"Подтвердить")]`,
 	"Заявление_отправлено":       `//h3/center[contains(text(), "Заявление отправлено")]`,
+	"xpath_right": `//button/span[contains(text(),"Верно")]`,
 }
-
-const (
-	max_wait_sec = 10
-	xpath_right  = `//button/span[contains(text(),"Верно")]`
-)
 
 func main() {
 	//логирование на экран и в файл
@@ -62,14 +61,17 @@ func main() {
 	}
 
 	// получаем логин/пароль от сайта
-	login_env := cfg.Section("gosuslugi.ru").Key("login").String()
-	login, err_bool := os.LookupEnv(login_env)
-	check_fatal_error_bool(err_bool, "Нет переменной окружения "+login_env)
-	password_env := cfg.Section("gosuslugi.ru").Key("password").String()
-	password, err_bool := os.LookupEnv(password_env)
-	check_fatal_error_bool(err_bool, "Нет переменной окружения "+password_env)
-	log.Println("login в переменной окружения ", login_env, login)
-	log.Println("password в переменной окружения ", password_env)
+	login := cfg.Section("gosuslugi.ru").Key("login").String()
+	if login == "" {
+		login, _ = os.LookupEnv("gosuslugi_login")
+	}
+	password := cfg.Section("gosuslugi.ru").Key("password").String()
+	if password == "" {
+		password, _ = os.LookupEnv("gosuslugi_password")
+	}
+	log.Println("login, password:", login, strings.Repeat("*", len(password)))
+
+	max_wait_sec, _ = cfg.Section("gosuslugi.ru").Key("max_wait_sec").Int()
 
 	//загружаем xpath из файла
 	for key_xpath, value_xpath := range xpaths {
@@ -79,7 +81,6 @@ func main() {
 		} else {
 			xpaths[key_xpath] = new_value
 		}
-
 	}
 
 	//Подготовка браузера к работе
@@ -92,14 +93,18 @@ func main() {
 	time.Sleep(1 * time.Second)
 	send_value("input_login", login)
 	send_value("input_password", password)
-	press_button("button_login")
+	if login != "" && password != "" {
+		press_button("button_login")
+		err = nil //чтобы логин-пароль ввести вручную при ошибке
+	}
 	time.Sleep(2 * time.Second)
 	press_button("Войти_как")
 
+	//Открытие страницы с сообщениями
 	open_url("https://lk.gosuslugi.ru/notifications?type=GEPS")
 
 	//Открываем все сообщения, нажатием //span[text()="Показать больше"]
-	for find_web_element(`//span[text()="Показать больше"]`) {
+	for find_web_element("Показать_больше") {
 		last_web_element.Click()
 		time.Sleep(2 * time.Second)
 	}
@@ -120,7 +125,7 @@ func main() {
 	log.Println("Найдено ", len(last_web_elements), `сообщений "Запрос на активацию корпоративной сим-карты"`) // , hrefs_message
 
 	// обход всех сообщений
-	arr_xpath := []string{xpath_right, `//h4[contains(text(), "Вы уже проверили данные")]`}
+	arr_xpath := []string{xpaths["xpath_right"], `//h4[contains(text(), "Вы уже проверили данные")]`}
 	for index, url_message := range hrefs_message {
 		var add_info string
 		open_url("https://lk.gosuslugi.ru" + url_message)
@@ -141,8 +146,8 @@ func main() {
 		find_web_element_by_xpaths(arr_xpath)
 		if err != nil {
 
-		} else if last_xpath == xpath_right {
-			press_button(xpath_right)
+		} else if last_xpath == xpaths["xpath_right"] {
+			press_button("xpath_right")
 			press_button("Кнопка_Подтвердить_данные")
 			find_web_element("Заявление_отправлено")
 			if err == nil {
@@ -164,12 +169,6 @@ func main() {
 
 	log.Println("End ", err)
 	time.Sleep(200 * time.Second)
-}
-
-func check_fatal_error_bool(err bool, text_error string) {
-	if !err {
-		log.Fatalln(text_error)
-	}
 }
 
 // подключение к браузеру
