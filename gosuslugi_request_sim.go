@@ -18,7 +18,7 @@ go build active_sim.go
 package main
 
 import (
-	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -32,7 +32,7 @@ import (
 var driver_service *selenium.Service
 var web_driver selenium.WebDriver
 var err error
-var max_wait_sec int
+var max_wait_sec, skip_message int
 var last_web_element selenium.WebElement
 var last_web_elements []selenium.WebElement
 var last_xpath string
@@ -72,6 +72,7 @@ func main() {
 	log.Println("login, password:", login, strings.Repeat("*", len(password)))
 
 	max_wait_sec, _ = cfg.Section("gosuslugi.ru").Key("max_wait_sec").Int()
+	skip_message, _ = cfg.Section("gosuslugi.ru").Key("skip_message").Int()
 
 	//загружаем xpath из файла
 	for key_xpath, value_xpath := range xpaths {
@@ -89,6 +90,7 @@ func main() {
 	defer web_driver.Quit()
 
 	//авторизация
+	log.Println("Авторизация на сайте")
 	open_url("https://lk.gosuslugi.ru/notifications?type=GEPS")
 	time.Sleep(1 * time.Second)
 	send_value("input_login", login)
@@ -101,6 +103,7 @@ func main() {
 	press_button("Войти_как")
 
 	//Открытие страницы с сообщениями
+	log.Println("Поиск сообщений по сим")
 	open_url("https://lk.gosuslugi.ru/notifications?type=GEPS")
 
 	//Открываем все сообщения, нажатием //span[text()="Показать больше"]
@@ -127,6 +130,12 @@ func main() {
 	// обход всех сообщений
 	arr_xpath := []string{xpaths["xpath_right"], `//h4[contains(text(), "Вы уже проверили данные")]`}
 	for index, url_message := range hrefs_message {
+
+		//Пропускаем первые skip_message сообщений
+		if index < skip_message {
+			continue
+		}
+
 		var add_info string
 		open_url("https://lk.gosuslugi.ru" + url_message)
 
@@ -143,8 +152,12 @@ func main() {
 		}
 
 		press_button("Кнопка_Проверить_данные")
+
+		//Поиск "Вы уже проверили данные" или "//button/span[contains(text(),"Верно")]"
 		find_web_element_by_xpaths(arr_xpath)
 		if err != nil {
+			err = nil
+			log.Println("Сообщение не проверено:", url_message)
 
 		} else if last_xpath == xpaths["xpath_right"] {
 			press_button("xpath_right")
@@ -173,6 +186,7 @@ func main() {
 
 // подключение к браузеру
 func prepare_browser() { // (driver_service *selenium.Service) web_driver selenium.WebDriver
+	log.Println("Открытие браузера chromedriver.exe")
 	ops := []selenium.ServiceOption{}
 	driver_service, err = selenium.NewChromeDriverService(`chromedriver.exe`, 9515, ops...)
 	if err != nil {
@@ -253,7 +267,7 @@ func find_web_element_by_xpaths(xpaths []string) {
 		time.Sleep(time.Second)
 	}
 	last_xpath = ""
-	err = errors.New("не найден ни один элемент xpath")
+	err = fmt.Errorf("не найден ни один элемент xpath из %d", xpaths)
 }
 
 //поиск xpath на странице, ожидая max_wait_sec секунд
